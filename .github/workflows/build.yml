@@ -1,9 +1,11 @@
 name: Build libjxl
 
-# - push to main / pull_request / workflow_dispatch: build + test, packages
-#   kept as artifacts
-# - tag v<LIBJXL_VERSION>-<PACKAGE_REVISION> (see build.env): also create a
-#   GitHub release with libjxl-native-*.tgz and libjxl-wasm-*.tgz
+# - pull_request / workflow_dispatch: build + test, packages kept as artifacts
+# - push to main: same, and if the tag v<LIBJXL_VERSION>-<PACKAGE_REVISION>
+#   (see build.env) does not exist yet, create it together with a GitHub
+#   release carrying libjxl-native-*.tgz and libjxl-wasm-*.tgz. So releasing
+#   is: bump build.env in a PR, merge.
+# - push of a matching tag: build + release (manual alternative)
 on:
   push:
     branches: [main]
@@ -16,7 +18,8 @@ permissions:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.ref_type != 'tag' }}
+  # Only superseded PR runs are cancelled; a push to main may be a release.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   config:
@@ -25,6 +28,8 @@ jobs:
       libjxl_version: ${{ steps.env.outputs.LIBJXL_VERSION }}
       package_version: ${{ steps.env.outputs.PACKAGE_VERSION }}
       emsdk_version: ${{ steps.env.outputs.EMSDK_VERSION }}
+      release: ${{ steps.env.outputs.RELEASE }}
+      tag: ${{ steps.env.outputs.TAG }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -33,17 +38,33 @@ jobs:
         env:
           REF_TYPE: ${{ github.ref_type }}
           REF_NAME: ${{ github.ref_name }}
+          EVENT: ${{ github.event_name }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
           source build.env
           version="${LIBJXL_VERSION}-${PACKAGE_REVISION}"
-          if [[ "$REF_TYPE" == tag && "$REF_NAME" != "v${version}" ]]; then
-            echo "::error::tag $REF_NAME does not match build.env (expected v${version})"
-            exit 1
+          tag="v${version}"
+          release=false
+          if [[ "$REF_TYPE" == tag ]]; then
+            if [[ "$REF_NAME" != "$tag" ]]; then
+              echo "::error::tag $REF_NAME does not match build.env (expected $tag)"
+              exit 1
+            fi
+            release=true
+          elif [[ "$EVENT" == push && "$REF_NAME" == main ]]; then
+            if gh api "repos/$GH_REPO/git/ref/tags/$tag" > /dev/null 2>&1; then
+              echo "$tag already exists; not releasing"
+            else
+              release=true
+            fi
           fi
           {
             echo "LIBJXL_VERSION=${LIBJXL_VERSION}"
             echo "PACKAGE_VERSION=${version}"
             echo "EMSDK_VERSION=${EMSDK_VERSION}"
+            echo "TAG=${tag}"
+            echo "RELEASE=${release}"
           } | tee -a "$GITHUB_OUTPUT"
 
   native:
@@ -58,8 +79,8 @@ jobs:
           - arch: arm64
             runner: ubuntu-24.04-arm
     env:
-      # Release builds (tags) are always built from scratch.
-      USE_CCACHE: ${{ github.ref_type == 'tag' && '0' || '1' }}
+      # Release builds are always built from scratch.
+      USE_CCACHE: ${{ needs.config.outputs.release == 'true' && '0' || '1' }}
       CCACHE_DIR: ${{ github.workspace }}/.ccache
       CCACHE_MAXSIZE: 500M
       CCACHE_COMPILERCHECK: content
@@ -109,7 +130,7 @@ jobs:
         # st: single-threaded, mt: pthreads. Each is a full libjxl build.
         variant: [st, mt]
     env:
-      USE_CCACHE: ${{ github.ref_type == 'tag' && '0' || '1' }}
+      USE_CCACHE: ${{ needs.config.outputs.release == 'true' && '0' || '1' }}
       CCACHE_DIR: ${{ github.workspace }}/.ccache
       CCACHE_MAXSIZE: 500M
       CCACHE_COMPILERCHECK: content
@@ -214,7 +235,7 @@ jobs:
           if-no-files-found: error
 
   release:
-    if: github.ref_type == 'tag'
+    if: needs.config.outputs.release == 'true'
     needs: [config, package]
     runs-on: ubuntu-24.04
     permissions:
@@ -228,7 +249,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          TAG: ${{ github.ref_name }}
+          TAG: ${{ needs.config.outputs.tag }}
           LIBJXL_VERSION: ${{ needs.config.outputs.libjxl_version }}
           VERSION: ${{ needs.config.outputs.package_version }}
           EMSDK_VERSION: ${{ needs.config.outputs.emsdk_version }}
@@ -249,5 +270,11 @@ jobs:
 
           Each package contains the license files of all bundled code in \`licenses/\` (libjxl BSD-3-Clause + PATENTS, brotli, highway, skcms, and for wasm the Emscripten runtime / libc++ / musl).
           EOF
-          gh release create "$TAG" --verify-tag --title "libjxl ${VERSION}" --notes-file notes.md \
+          # For a push to main this also creates the tag on the built commit.
+          if [[ "$GITHUB_REF_TYPE" == tag ]]; then
+            target=(--verify-tag)
+          else
+            target=(--target "$GITHUB_SHA")
+          fi
+          gh release create "$TAG" "${target[@]}" --title "libjxl ${VERSION}" --notes-file notes.md \
             dist/libjxl-native-${VERSION}.tgz dist/libjxl-wasm-${VERSION}.tgz dist/SHA256SUMS
