@@ -1,0 +1,29 @@
+{
+  "name": "libjxl-wasm",
+  "version": "0.0.0-dev",
+  "private": true,
+  "description": "Unofficial prebuilt libjxl (JPEG XL reference library) compiled to WebAssembly",
+  "license": "BSD-3-Clause AND MIT AND (Apache-2.0 OR BSD-3-Clause) AND (MIT OR NCSA) AND Apache-2.0 WITH LLVM-exception",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/hamtit/jxlenc.git"
+  },
+  "type": "module",
+  "main": "./dist/libjxl.js",
+  "types": "./dist/libjxl.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/libjxl.d.ts",
+      "default": "./dist/libjxl.js"
+    },
+    "./mt": {
+      "types": "./dist/libjxl-mt.d.ts",
+      "default": "./dist/libjxl-mt.js"
+    },
+    "./dist/*": "./dist/*",
+    "./include/*": "./include/*",
+    "./package.json": "./package.json"
+  },
+  "sideEffects": false,
+  "libjxl": {}
+}

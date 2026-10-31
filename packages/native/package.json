@@ -1,0 +1,23 @@
+{
+  "name": "libjxl-native",
+  "version": "0.0.0-dev",
+  "private": true,
+  "description": "Unofficial prebuilt libjxl (JPEG XL reference library) shared libraries for Linux x64/arm64",
+  "license": "BSD-3-Clause AND MIT AND (Apache-2.0 OR BSD-3-Clause)",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/hamtit/jxlenc.git"
+  },
+  "os": ["linux"],
+  "cpu": ["x64", "arm64"],
+  "main": "index.js",
+  "types": "index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "default": "./index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "libjxl": {}
+}
