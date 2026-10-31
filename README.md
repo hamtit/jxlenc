@@ -6,7 +6,7 @@ upstream sources.
 
 | Release asset | Contents |
 | --- | --- |
-| `libjxl-native-<ver>-<rev>.tgz` | shared libraries for Linux x64 and arm64 (cross-compiled) + headers ([README](packages/native/README.md)) |
+| `libjxl-native-<ver>-<rev>.tgz` | shared libraries for Linux x64 and arm64 + headers ([README](packages/native/README.md)) |
 | `libjxl-wasm-<ver>-<rev>.tgz` | WebAssembly modules, single-threaded and pthreads ([README](packages/wasm/README.md)) |
 
 Both are npm package tarballs. They are not published to the npm registry;
@@ -40,8 +40,8 @@ artifacts without releasing.
 ```
 build.env                 versions to build
 scripts/fetch-libjxl.sh   clone libjxl + the submodules that get linked in
-scripts/build-native.sh   CMake shared build (x64 native, arm64 cross)
-scripts/build-wasm.sh     Emscripten static build + link to .js/.wasm
+scripts/build-native.sh   CMake shared build (x64 / arm64; cross-compiles if the runner differs)
+scripts/build-wasm.sh     Emscripten static build + link to .js/.wasm (st or mt)
 scripts/pack.mjs          assemble and `npm pack` the packages
 packages/{native,wasm}/   package templates (package.json, README, JS)
 tests/                    round-trip smoke tests (C and wasm)

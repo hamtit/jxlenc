@@ -6,15 +6,28 @@
 #   lib/        shared libraries, named by SONAME (no symlinks; npm drops them)
 #   include/    public headers (jxl/ only)
 #   licenses/   license files of everything linked into lib/
+#
+# With USE_CCACHE=1, compiles go through ccache.
 set -euo pipefail
 src="$(realpath "${1:?libjxl src}")"
 arch="${2:?arch}"
 out="$(realpath -m "${3:?out dir}")"
 work="$(realpath -m "${WORK_DIR:-work}")/native-$arch"
 
+# Cross-compile only when the runner's architecture differs from the target
+# (arm64 normally builds natively on an arm64 runner).
+case "$(uname -m)" in
+  x86_64) host=x64 ;;
+  aarch64) host=arm64 ;;
+  *) host="$(uname -m)" ;;
+esac
+
 cmake_args=()
+if [[ "${USE_CCACHE:-}" == 1 ]]; then
+  cmake_args+=(-DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache)
+fi
 case "$arch" in
-  x64) ;;
+  "$host") ;;
   arm64)
     cmake_args+=(
       -DCMAKE_SYSTEM_NAME=Linux
