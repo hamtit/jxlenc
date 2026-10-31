@@ -120,6 +120,9 @@ if (kind === 'native') {
   throw new Error(`unknown package kind: ${kind}`);
 }
 
+// This repository's own code (JS wrapper, wasm helpers) is MIT.
+copy(path.join(root, 'LICENSE'), path.join(stage, 'licenses', 'LICENSE.jxlenc'));
+
 const pkg = JSON.parse(fs.readFileSync(path.join(template, 'package.json'), 'utf8'));
 pkg.version = version;
 pkg.libjxl = { version: env.LIBJXL_VERSION, commit: env.LIBJXL_COMMIT };

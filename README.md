@@ -46,7 +46,12 @@ packages/{native,wasm}/   package templates (package.json, README, JS)
 tests/                    round-trip smoke tests (C and wasm)
 ```
 
-## Licenses
+## License
+
+This repository (build scripts, package templates, wasm helpers) is MIT
+licensed, see `LICENSE`.
+
+## Licenses of the packaged code
 
 The packages redistribute third-party code; every package includes the
 license texts in `licenses/`:
