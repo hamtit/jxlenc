@@ -3,7 +3,8 @@ name: Build libjxl
 # - pull_request / workflow_dispatch: build + test, packages kept as artifacts
 # - push to main: same, and if the tag v<LIBJXL_VERSION>-<PACKAGE_REVISION>
 #   (see build.env) does not exist yet, create it together with a GitHub
-#   release carrying libjxl-native-*.tgz and libjxl-wasm-*.tgz. So releasing
+#   release carrying libjxl-native-*.tgz (x64 + arm64 bundled),
+#   libjxl-native-linux-{x64,arm64}-*.tgz and libjxl-wasm-*.tgz. So releasing
 #   is: bump build.env in a PR, merge.
 # - push of a matching tag: build + release (manual alternative)
 on:
@@ -201,6 +202,8 @@ jobs:
       - name: Pack
         run: |
           node scripts/pack.mjs native dist out/native-x64 out/native-arm64
+          node scripts/pack.mjs native-arch dist x64 out/native-x64
+          node scripts/pack.mjs native-arch dist arm64 out/native-arm64
           node scripts/pack.mjs wasm dist out/wasm-st out/wasm-mt
           for f in dist/*.tgz; do
             echo "== $f"
@@ -224,6 +227,22 @@ jobs:
           gcc -O2 "$GITHUB_WORKSPACE/tests/smoke.c" -I"$inc" -L"$lib" \
             -ljxl -ljxl_threads -Wl,-rpath,"$lib" -o smoke
           ./smoke 4
+
+          # Single-platform package for the runner's architecture; the one for
+          # the other architecture must be refused by os/cpu.
+          npm install --no-audit --no-fund \
+            "$GITHUB_WORKSPACE/dist/libjxl-native-linux-x64-$VERSION.tgz"
+          arch_lib="$(node -p "require('libjxl-native-linux-x64').libDir()")"
+          gcc -O2 "$GITHUB_WORKSPACE/tests/smoke.c" \
+            -I"$(node -p "require('libjxl-native-linux-x64').includeDir")" -L"$arch_lib" \
+            -ljxl -ljxl_threads -Wl,-rpath,"$arch_lib" -o smoke-x64
+          ./smoke-x64 4
+          if npm install --no-audit --no-fund \
+            "$GITHUB_WORKSPACE/dist/libjxl-native-linux-arm64-$VERSION.tgz" 2> arm64.log; then
+            echo "::error::arm64 package was installed on x64"
+            exit 1
+          fi
+          grep -q EBADPLATFORM arm64.log
 
           cp "$GITHUB_WORKSPACE/tests/wasm-smoke.mjs" .
           node wasm-smoke.mjs libjxl-wasm
@@ -260,11 +279,15 @@ jobs:
 
           | File | Contents |
           | --- | --- |
-          | \`libjxl-native-${VERSION}.tgz\` | Shared libraries for Linux x64 / arm64 (glibc, built on Ubuntu 24.04) + headers |
+          | \`libjxl-native-linux-x64-${VERSION}.tgz\` | Shared libraries for Linux x64 only (glibc, built on Ubuntu 24.04) + headers |
+          | \`libjxl-native-linux-arm64-${VERSION}.tgz\` | Same for Linux arm64 only |
+          | \`libjxl-native-${VERSION}.tgz\` | Both architectures bundled in one package |
           | \`libjxl-wasm-${VERSION}.tgz\` | WebAssembly modules (single-threaded and pthreads, SIMD128), Emscripten ${EMSDK_VERSION} |
 
           \`\`\`sh
           npm install ${base}/libjxl-native-${VERSION}.tgz
+          # or only one architecture (os/cpu fields let package managers skip the other):
+          npm install ${base}/libjxl-native-linux-x64-${VERSION}.tgz
           npm install ${base}/libjxl-wasm-${VERSION}.tgz
           \`\`\`
 
@@ -277,4 +300,5 @@ jobs:
             target=(--target "$GITHUB_SHA")
           fi
           gh release create "$TAG" "${target[@]}" --title "libjxl ${VERSION}" --notes-file notes.md \
-            dist/libjxl-native-${VERSION}.tgz dist/libjxl-wasm-${VERSION}.tgz dist/SHA256SUMS
+            dist/libjxl-native-${VERSION}.tgz dist/libjxl-native-linux-x64-${VERSION}.tgz \
+            dist/libjxl-native-linux-arm64-${VERSION}.tgz dist/libjxl-wasm-${VERSION}.tgz dist/SHA256SUMS
