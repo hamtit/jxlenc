@@ -2,9 +2,11 @@
 // Assemble an npm package from build outputs and `npm pack` it.
 //
 //   node scripts/pack.mjs native <out-dir> <native-x64-dir> <native-arm64-dir>
+//   node scripts/pack.mjs native-arch <out-dir> <x64|arm64> <native-dir>
 //   node scripts/pack.mjs wasm   <out-dir> <wasm-st-dir> <wasm-mt-dir>
 //
 // Writes <out-dir>/libjxl-<kind>-<LIBJXL_VERSION>-<PACKAGE_REVISION>.tgz
+// (native-arch: libjxl-native-linux-<arch>-<version>.tgz)
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -83,6 +85,9 @@ const env = readEnv(path.join(root, 'build.env'));
 const version = `${env.LIBJXL_VERSION}-${env.PACKAGE_REVISION}`;
 const stage = fs.mkdtempSync(path.join(os.tmpdir(), `libjxl-${kind}-`));
 const template = path.join(root, 'packages', kind);
+// Package name and tarball base name (native-arch is per platform).
+let pkgName = `libjxl-${kind}`;
+let archName;
 
 if (kind === 'native') {
   const [x64, arm64] = inputs.map((p) => path.resolve(p));
@@ -96,6 +101,19 @@ if (kind === 'native') {
   copy(path.join(arm64, 'lib'), path.join(stage, 'lib', 'linux-arm64'));
   copy(path.join(x64, 'include'), path.join(stage, 'include'));
   copy(path.join(x64, 'licenses'), path.join(stage, 'licenses'));
+} else if (kind === 'native-arch') {
+  archName = inputs[0];
+  if (!['x64', 'arm64'].includes(archName)) throw new Error(`unknown arch: ${archName}`);
+  pkgName = `libjxl-native-linux-${archName}`;
+  const dir = path.resolve(inputs[1]);
+  for (const f of ['index.js', 'index.d.ts']) copy(path.join(template, f), path.join(stage, f));
+  fs.writeFileSync(
+    path.join(stage, 'README.md'),
+    fs.readFileSync(path.join(template, 'README.md'), 'utf8').replaceAll('ARCH', archName),
+  );
+  copy(path.join(dir, 'lib'), path.join(stage, 'lib'));
+  copy(path.join(dir, 'include'), path.join(stage, 'include'));
+  copy(path.join(dir, 'licenses'), path.join(stage, 'licenses'));
 } else if (kind === 'wasm') {
   const [st, mt] = inputs.map((p) => path.resolve(p));
   for (const sub of ['include', 'licenses']) {
@@ -123,7 +141,9 @@ if (kind === 'native') {
 // This repository's own code (JS wrapper, wasm helpers) is MIT.
 copy(path.join(root, 'LICENSE'), path.join(stage, 'licenses', 'LICENSE.jxlenc'));
 
-const pkg = JSON.parse(fs.readFileSync(path.join(template, 'package.json'), 'utf8'));
+const pkg = JSON.parse(
+  fs.readFileSync(path.join(template, 'package.json'), 'utf8').replaceAll('ARCH', archName ?? 'ARCH'),
+);
 pkg.version = version;
 pkg.libjxl = { version: env.LIBJXL_VERSION, commit: env.LIBJXL_COMMIT };
 if (kind === 'wasm') pkg.libjxl.emscripten = env.EMSDK_VERSION;
@@ -134,7 +154,7 @@ const dest = path.resolve(outDir);
 const [{ filename }] = JSON.parse(
   execFileSync('npm', ['pack', '--json', '--pack-destination', dest], { cwd: stage, encoding: 'utf8' }),
 );
-const expected = `libjxl-${kind}-${version}.tgz`;
+const expected = `${pkgName}-${version}.tgz`;
 if (path.basename(filename) !== expected) {
   fs.renameSync(path.join(dest, path.basename(filename)), path.join(dest, expected));
 }

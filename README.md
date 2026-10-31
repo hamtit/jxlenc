@@ -7,14 +7,25 @@ upstream sources.
 | Release asset | Contents |
 | --- | --- |
 | `libjxl-native-<ver>-<rev>.tgz` | shared libraries for Linux x64 and arm64 + headers ([README](packages/native/README.md)) |
+| `libjxl-native-linux-x64-<ver>-<rev>.tgz`, `libjxl-native-linux-arm64-<ver>-<rev>.tgz` | the same, one architecture per package (`os`/`cpu` set, so package managers skip the other; [README](packages/native-arch/README.md)) |
 | `libjxl-wasm-<ver>-<rev>.tgz` | WebAssembly modules, single-threaded and pthreads ([README](packages/wasm/README.md)) |
 
 Both are npm package tarballs. They are not published to the npm registry;
 install them from the release URL:
 
 ```sh
-npm install https://github.com/hamtit/jxlenc/releases/download/v0.12.0-1/libjxl-native-0.12.0-1.tgz
-npm install https://github.com/hamtit/jxlenc/releases/download/v0.12.0-1/libjxl-wasm-0.12.0-1.tgz
+npm install https://github.com/hamtit/jxlenc/releases/download/v0.12.0-2/libjxl-native-0.12.0-2.tgz
+npm install https://github.com/hamtit/jxlenc/releases/download/v0.12.0-2/libjxl-wasm-0.12.0-2.tgz
+```
+
+To fetch only the matching architecture, list both single-platform packages
+as `optionalDependencies` (they have the same API as `libjxl-native`):
+
+```json
+"optionalDependencies": {
+  "libjxl-native-linux-x64": "https://github.com/hamtit/jxlenc/releases/download/v0.12.0-2/libjxl-native-linux-x64-0.12.0-2.tgz",
+  "libjxl-native-linux-arm64": "https://github.com/hamtit/jxlenc/releases/download/v0.12.0-2/libjxl-native-linux-arm64-0.12.0-2.tgz"
+}
 ```
 
 (`"private": true` is set in both packages so that they cannot be published by
@@ -42,7 +53,7 @@ scripts/fetch-libjxl.sh   clone libjxl + the submodules that get linked in
 scripts/build-native.sh   CMake shared build (x64 / arm64; cross-compiles if the runner differs)
 scripts/build-wasm.sh     Emscripten static build + link to .js/.wasm (st or mt)
 scripts/pack.mjs          assemble and `npm pack` the packages
-packages/{native,wasm}/   package templates (package.json, README, JS)
+packages/{native,native-arch,wasm}/   package templates (package.json, README, JS)
 tests/                    round-trip smoke tests (C and wasm)
 ```
 
