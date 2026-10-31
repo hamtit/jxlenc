@@ -2,7 +2,7 @@
 // Assemble an npm package from build outputs and `npm pack` it.
 //
 //   node scripts/pack.mjs native <out-dir> <native-x64-dir> <native-arm64-dir>
-//   node scripts/pack.mjs wasm   <out-dir> <wasm-dir>
+//   node scripts/pack.mjs wasm   <out-dir> <wasm-st-dir> <wasm-mt-dir>
 //
 // Writes <out-dir>/libjxl-<kind>-<LIBJXL_VERSION>-<PACKAGE_REVISION>.tgz
 import { execFileSync } from 'node:child_process';
@@ -97,23 +97,31 @@ if (kind === 'native') {
   copy(path.join(x64, 'include'), path.join(stage, 'include'));
   copy(path.join(x64, 'licenses'), path.join(stage, 'licenses'));
 } else if (kind === 'wasm') {
-  const [wasm] = inputs.map((p) => path.resolve(p));
+  const [st, mt] = inputs.map((p) => path.resolve(p));
+  for (const sub of ['include', 'licenses']) {
+    if (!sameTree(path.join(st, sub), path.join(mt, sub))) {
+      throw new Error(`${sub}/ differs between st and mt builds`);
+    }
+  }
   copy(path.join(template, 'README.md'), path.join(stage, 'README.md'));
-  copy(path.join(wasm, 'include'), path.join(stage, 'include'));
-  copy(path.join(wasm, 'licenses'), path.join(stage, 'licenses'));
+  copy(path.join(st, 'include'), path.join(stage, 'include'));
+  copy(path.join(st, 'licenses'), path.join(stage, 'licenses'));
   fs.mkdirSync(path.join(stage, 'dist'));
-  for (const [name, threads] of [['libjxl', false], ['libjxl-mt', true]]) {
+  for (const [dir, name, threads] of [[st, 'libjxl', false], [mt, 'libjxl-mt', true]]) {
     for (const ext of ['.js', '.wasm']) {
-      copy(path.join(wasm, 'dist', name + ext), path.join(stage, 'dist', name + ext));
+      copy(path.join(dir, 'dist', name + ext), path.join(stage, 'dist', name + ext));
     }
     fs.writeFileSync(
       path.join(stage, 'dist', `${name}.d.ts`),
-      moduleTypes(path.join(wasm, 'dist', `${name}.exports`), threads),
+      moduleTypes(path.join(dir, 'dist', `${name}.exports`), threads),
     );
   }
 } else {
   throw new Error(`unknown package kind: ${kind}`);
 }
+
+// This repository's own code (JS wrapper, wasm helpers) is MIT.
+copy(path.join(root, 'LICENSE'), path.join(stage, 'licenses', 'LICENSE.jxlenc'));
 
 const pkg = JSON.parse(fs.readFileSync(path.join(template, 'package.json'), 'utf8'));
 pkg.version = version;

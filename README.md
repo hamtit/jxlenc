@@ -6,7 +6,7 @@ upstream sources.
 
 | Release asset | Contents |
 | --- | --- |
-| `libjxl-native-<ver>-<rev>.tgz` | shared libraries for Linux x64 and arm64 (cross-compiled) + headers ([README](packages/native/README.md)) |
+| `libjxl-native-<ver>-<rev>.tgz` | shared libraries for Linux x64 and arm64 + headers ([README](packages/native/README.md)) |
 | `libjxl-wasm-<ver>-<rev>.tgz` | WebAssembly modules, single-threaded and pthreads ([README](packages/wasm/README.md)) |
 
 Both are npm package tarballs. They are not published to the npm registry;
@@ -22,32 +22,36 @@ accident.)
 
 ## Releasing
 
-1. Edit `build.env`: `LIBJXL_VERSION`, `LIBJXL_COMMIT` (commit of the upstream
-   tag, checked after cloning), `PACKAGE_REVISION` (start at 1, bump to
-   re-release the same libjxl version), `EMSDK_VERSION`.
-2. Merge, then push the tag `v<LIBJXL_VERSION>-<PACKAGE_REVISION>`:
+1. In a pull request, edit `build.env`: `LIBJXL_VERSION`, `LIBJXL_COMMIT`
+   (commit of the upstream tag, checked after cloning), `PACKAGE_REVISION`
+   (start at 1, bump to re-release the same libjxl version), `EMSDK_VERSION`.
+2. Merge it. The build on `main` notices that the tag
+   `v<LIBJXL_VERSION>-<PACKAGE_REVISION>` does not exist yet, builds without
+   ccache, and after all tests pass creates the tag and the GitHub release.
 
-   ```sh
-   git tag v0.12.0-1 && git push origin v0.12.0-1
-   ```
-
-The workflow refuses tags that do not match `build.env`. Pull requests and
-manual runs build and test everything and keep the packages as workflow
-artifacts without releasing.
+Pushes to `main` whose tag already exists only build and test. Pushing a
+matching tag by hand also releases; a tag that does not match `build.env` is
+rejected. Pull requests and manual runs build and test everything and keep
+the packages as workflow artifacts.
 
 ## Layout
 
 ```
 build.env                 versions to build
 scripts/fetch-libjxl.sh   clone libjxl + the submodules that get linked in
-scripts/build-native.sh   CMake shared build (x64 native, arm64 cross)
-scripts/build-wasm.sh     Emscripten static build + link to .js/.wasm
+scripts/build-native.sh   CMake shared build (x64 / arm64; cross-compiles if the runner differs)
+scripts/build-wasm.sh     Emscripten static build + link to .js/.wasm (st or mt)
 scripts/pack.mjs          assemble and `npm pack` the packages
 packages/{native,wasm}/   package templates (package.json, README, JS)
 tests/                    round-trip smoke tests (C and wasm)
 ```
 
-## Licenses
+## License
+
+This repository (build scripts, package templates, wasm helpers) is MIT
+licensed, see `LICENSE`.
+
+## Licenses of the packaged code
 
 The packages redistribute third-party code; every package includes the
 license texts in `licenses/`:

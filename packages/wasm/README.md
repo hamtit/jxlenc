@@ -80,6 +80,7 @@ grant (`licenses/PATENTS.jpeg-xl`). The modules also contain:
 | Emscripten runtime | MIT OR NCSA | `licenses/LICENSE.emscripten` |
 | libc++ / libc++abi / compiler-rt | Apache-2.0 WITH LLVM-exception | `licenses/LICENSE.libcxx`, `licenses/LICENSE.libcxxabi`, `licenses/LICENSE.compiler-rt` |
 | musl libc | MIT | `licenses/LICENSE.musl` |
+| `jxlwasm_*` helpers (hamtit/jxlenc) | MIT | `licenses/LICENSE.jxlenc` |
 
 When you redistribute these modules (e.g. in a web app), include the files
 from `licenses/`.

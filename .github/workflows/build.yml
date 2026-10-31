@@ -1,10 +1,14 @@
 name: Build libjxl
 
 # - pull_request / workflow_dispatch: build + test, packages kept as artifacts
-# - tag v<LIBJXL_VERSION>-<PACKAGE_REVISION> (see build.env): also create a
-#   GitHub release with libjxl-native-*.tgz and libjxl-wasm-*.tgz
+# - push to main: same, and if the tag v<LIBJXL_VERSION>-<PACKAGE_REVISION>
+#   (see build.env) does not exist yet, create it together with a GitHub
+#   release carrying libjxl-native-*.tgz and libjxl-wasm-*.tgz. So releasing
+#   is: bump build.env in a PR, merge.
+# - push of a matching tag: build + release (manual alternative)
 on:
   push:
+    branches: [main]
     tags: ['v*']
   pull_request:
   workflow_dispatch:
@@ -14,7 +18,8 @@ permissions:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.ref_type != 'tag' }}
+  # Only superseded PR runs are cancelled; a push to main may be a release.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   config:
@@ -23,6 +28,8 @@ jobs:
       libjxl_version: ${{ steps.env.outputs.LIBJXL_VERSION }}
       package_version: ${{ steps.env.outputs.PACKAGE_VERSION }}
       emsdk_version: ${{ steps.env.outputs.EMSDK_VERSION }}
+      release: ${{ steps.env.outputs.RELEASE }}
+      tag: ${{ steps.env.outputs.TAG }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -31,60 +38,83 @@ jobs:
         env:
           REF_TYPE: ${{ github.ref_type }}
           REF_NAME: ${{ github.ref_name }}
+          EVENT: ${{ github.event_name }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
           source build.env
           version="${LIBJXL_VERSION}-${PACKAGE_REVISION}"
-          if [[ "$REF_TYPE" == tag && "$REF_NAME" != "v${version}" ]]; then
-            echo "::error::tag $REF_NAME does not match build.env (expected v${version})"
-            exit 1
+          tag="v${version}"
+          release=false
+          if [[ "$REF_TYPE" == tag ]]; then
+            if [[ "$REF_NAME" != "$tag" ]]; then
+              echo "::error::tag $REF_NAME does not match build.env (expected $tag)"
+              exit 1
+            fi
+            release=true
+          elif [[ "$EVENT" == push && "$REF_NAME" == main ]]; then
+            if gh api "repos/$GH_REPO/git/ref/tags/$tag" > /dev/null 2>&1; then
+              echo "$tag already exists; not releasing"
+            else
+              release=true
+            fi
           fi
           {
             echo "LIBJXL_VERSION=${LIBJXL_VERSION}"
             echo "PACKAGE_VERSION=${version}"
             echo "EMSDK_VERSION=${EMSDK_VERSION}"
+            echo "TAG=${tag}"
+            echo "RELEASE=${release}"
           } | tee -a "$GITHUB_OUTPUT"
 
   native:
     needs: config
-    runs-on: ubuntu-24.04
+    runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
       matrix:
-        arch: [x64, arm64]
+        include:
+          - arch: x64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    env:
+      # Release builds are always built from scratch.
+      USE_CCACHE: ${{ needs.config.outputs.release == 'true' && '0' || '1' }}
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_MAXSIZE: 500M
+      CCACHE_COMPILERCHECK: content
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Install toolchain
-        env:
-          ARCH: ${{ matrix.arch }}
         run: |
-          pkgs=(ninja-build)
-          if [[ "$ARCH" == arm64 ]]; then
-            pkgs+=(gcc-aarch64-linux-gnu g++-aarch64-linux-gnu qemu-user)
-          fi
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends "${pkgs[@]}"
+          sudo apt-get install -y --no-install-recommends ninja-build ccache
+      - if: env.USE_CCACHE == '1'
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .ccache
+          key: ccache-native-${{ matrix.arch }}-${{ hashFiles('build.env') }}-${{ github.run_id }}
+          restore-keys: |
+            ccache-native-${{ matrix.arch }}-${{ hashFiles('build.env') }}-
+            ccache-native-${{ matrix.arch }}-
       - name: Fetch libjxl
         run: scripts/fetch-libjxl.sh work/libjxl
       - name: Build
-        run: scripts/build-native.sh work/libjxl ${{ matrix.arch }} out/native-${{ matrix.arch }}
+        run: |
+          scripts/build-native.sh work/libjxl ${{ matrix.arch }} out/native-${{ matrix.arch }}
+          if [[ "$USE_CCACHE" == 1 ]]; then ccache --show-stats; fi
       - name: Smoke test
         env:
           ARCH: ${{ matrix.arch }}
         run: |
           dir="$PWD/out/native-$ARCH"
-          if [[ "$ARCH" == arm64 ]]; then
-            cc=aarch64-linux-gnu-gcc
-            run=(qemu-aarch64 -L /usr/aarch64-linux-gnu)
-          else
-            cc=gcc
-            run=()
-          fi
-          $cc -O2 -Wall tests/smoke.c -I"$dir/include" -L"$dir/lib" \
+          gcc -O2 -Wall tests/smoke.c -I"$dir/include" -L"$dir/lib" \
             -ljxl -ljxl_threads -Wl,-rpath,"$dir/lib" -o work/smoke
-          "${run[@]}" work/smoke 0
-          "${run[@]}" work/smoke 4
+          work/smoke 0
+          work/smoke 4
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: native-${{ matrix.arch }}
@@ -94,6 +124,16 @@ jobs:
   wasm:
     needs: config
     runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        # st: single-threaded, mt: pthreads. Each is a full libjxl build.
+        variant: [st, mt]
+    env:
+      USE_CCACHE: ${{ needs.config.outputs.release == 'true' && '0' || '1' }}
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CCACHE_MAXSIZE: 500M
+      CCACHE_COMPILERCHECK: content
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -101,7 +141,15 @@ jobs:
       - name: Install toolchain
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends ninja-build
+          sudo apt-get install -y --no-install-recommends ninja-build ccache
+      - if: env.USE_CCACHE == '1'
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .ccache
+          key: ccache-wasm-${{ matrix.variant }}-${{ hashFiles('build.env') }}-${{ github.run_id }}
+          restore-keys: |
+            ccache-wasm-${{ matrix.variant }}-${{ hashFiles('build.env') }}-
+            ccache-wasm-${{ matrix.variant }}-
       - name: Fetch libjxl
         run: scripts/fetch-libjxl.sh work/libjxl
       - name: Install emsdk
@@ -116,11 +164,12 @@ jobs:
         run: |
           source work/emsdk/emsdk_env.sh
           emcc --version
-          scripts/build-wasm.sh work/libjxl out/wasm
+          scripts/build-wasm.sh work/libjxl ${{ matrix.variant }} out/wasm-${{ matrix.variant }}
+          if [[ "$USE_CCACHE" == 1 ]]; then ccache --show-stats; fi
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: wasm
-          path: out/wasm
+          name: wasm-${{ matrix.variant }}
+          path: out/wasm-${{ matrix.variant }}
           if-no-files-found: error
 
   package:
@@ -143,12 +192,16 @@ jobs:
           path: out/native-arm64
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: wasm
-          path: out/wasm
+          name: wasm-st
+          path: out/wasm-st
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: wasm-mt
+          path: out/wasm-mt
       - name: Pack
         run: |
           node scripts/pack.mjs native dist out/native-x64 out/native-arm64
-          node scripts/pack.mjs wasm dist out/wasm
+          node scripts/pack.mjs wasm dist out/wasm-st out/wasm-mt
           for f in dist/*.tgz; do
             echo "== $f"
             tar tzvf "$f"
@@ -182,7 +235,7 @@ jobs:
           if-no-files-found: error
 
   release:
-    if: github.ref_type == 'tag'
+    if: needs.config.outputs.release == 'true'
     needs: [config, package]
     runs-on: ubuntu-24.04
     permissions:
@@ -196,7 +249,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          TAG: ${{ github.ref_name }}
+          TAG: ${{ needs.config.outputs.tag }}
           LIBJXL_VERSION: ${{ needs.config.outputs.libjxl_version }}
           VERSION: ${{ needs.config.outputs.package_version }}
           EMSDK_VERSION: ${{ needs.config.outputs.emsdk_version }}
@@ -217,5 +270,11 @@ jobs:
 
           Each package contains the license files of all bundled code in \`licenses/\` (libjxl BSD-3-Clause + PATENTS, brotli, highway, skcms, and for wasm the Emscripten runtime / libc++ / musl).
           EOF
-          gh release create "$TAG" --verify-tag --title "libjxl ${VERSION}" --notes-file notes.md \
+          # For a push to main this also creates the tag on the built commit.
+          if [[ "$GITHUB_REF_TYPE" == tag ]]; then
+            target=(--verify-tag)
+          else
+            target=(--target "$GITHUB_SHA")
+          fi
+          gh release create "$TAG" "${target[@]}" --title "libjxl ${VERSION}" --notes-file notes.md \
             dist/libjxl-native-${VERSION}.tgz dist/libjxl-wasm-${VERSION}.tgz dist/SHA256SUMS

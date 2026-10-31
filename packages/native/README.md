@@ -63,6 +63,7 @@ grant (`licenses/PATENTS.jpeg-xl`). The libraries also contain:
 | brotli | MIT | `licenses/LICENSE.brotli` |
 | highway | Apache-2.0 OR BSD-3-Clause | `licenses/LICENSE.highway`, `licenses/LICENSE-BSD3.highway` |
 | skcms | BSD-3-Clause | `licenses/LICENSE.skcms` |
+| `index.js`, `index.d.ts` (hamtit/jxlenc) | MIT | `licenses/LICENSE.jxlenc` |
 
 When you redistribute these libraries (e.g. in an application), include the
 files from `licenses/`.

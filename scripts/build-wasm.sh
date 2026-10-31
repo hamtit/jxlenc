@@ -1,21 +1,30 @@
 #!/usr/bin/env bash
-# Build libjxl as WebAssembly modules (Emscripten must be on PATH).
-# Usage: build-wasm.sh <libjxl-src> <out-dir>
+# Build one libjxl WebAssembly variant (Emscripten must be on PATH).
+# Usage: build-wasm.sh <libjxl-src> <st|mt> <out-dir>
 #
-# <out-dir> receives:
-#   dist/libjxl.{js,wasm}      single-threaded, SIMD128
-#   dist/libjxl-mt.{js,wasm}   pthreads (needs SharedArrayBuffer), SIMD128
-#   dist/*.exports             exported C symbols, one per line
+#   st: dist/libjxl.{js,wasm}      single-threaded, SIMD128
+#   mt: dist/libjxl-mt.{js,wasm}   pthreads (needs SharedArrayBuffer), SIMD128
+#
+# <out-dir> also receives:
+#   dist/<name>.exports        exported C symbols, one per line
 #   include/                   public headers (jxl/ only)
 #   licenses/                  license files of everything linked in
+#
+# With USE_CCACHE=1, compiles go through ccache.
 set -euo pipefail
 here="$(cd "$(dirname "$0")/.." && pwd)"
 src="$(realpath "${1:?libjxl src}")"
-out="$(realpath -m "${2:?out dir}")"
-work="$(realpath -m "${WORK_DIR:-work}")/wasm"
+variant="${2:?st|mt}"
+out="$(realpath -m "${3:?out dir}")"
+work="$(realpath -m "${WORK_DIR:-work}")/wasm-$variant"
 
 rm -rf "$work" "$out"
 mkdir -p "$out/dist" "$out/include" "$out/licenses"
+
+launcher=()
+if [[ "${USE_CCACHE:-}" == 1 ]]; then
+  launcher=(-DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache)
+fi
 
 build_variant() {
   local name="$1" threads="$2"
@@ -31,6 +40,7 @@ build_variant() {
     -DBUILD_SHARED_LIBS=OFF \
     -DBUILD_TESTING=OFF \
     -DJPEGXL_ENABLE_WASM_THREADS="$threads" \
+    -DJPEGXL_BUNDLE_LIBPNG=OFF \
     -DJPEGXL_ENABLE_TOOLS=OFF \
     -DJPEGXL_ENABLE_JPEGLI=OFF \
     -DJPEGXL_ENABLE_SJPEG=OFF \
@@ -44,7 +54,8 @@ build_variant() {
     -DJPEGXL_ENABLE_FUZZERS=OFF \
     -DJPEGXL_ENABLE_DEVTOOLS=OFF \
     -DJPEGXL_ENABLE_PLUGINS=OFF \
-    -DJPEGXL_ENABLE_VIEWERS=OFF
+    -DJPEGXL_ENABLE_VIEWERS=OFF \
+    "${launcher[@]}"
   cmake --build "$build"
   cmake --install "$build"
 
@@ -95,8 +106,12 @@ build_variant() {
     )
   fi
 
-  emcc "${link[@]}" "${defs[@]}" -I"$prefix/include" \
-    "$here/packages/wasm/src/jxlwasm.c" \
+  # The helpers are C (unmangled exports); libjxl is C++, so link with em++.
+  local cflags_arr
+  read -ra cflags_arr <<< "$cflags"
+  emcc -O3 "${cflags_arr[@]}" "${defs[@]}" -I"$prefix/include" \
+    -c "$here/packages/wasm/src/jxlwasm.c" -o "$build/jxlwasm.o"
+  em++ "${link[@]}" "$build/jxlwasm.o" \
     "${libs[@]}" "${brotli[@]}" "$lib/libhwy.a" \
     -o "$out/dist/$name.js"
 
@@ -107,16 +122,17 @@ build_variant() {
     sed -i '/parallel_runner$/d' "$exports"
   fi
 
-  if [[ -z "$(ls -A "$out/include")" ]]; then
-    cp -r "$prefix/include/jxl" "$out/include/"
-    cp "$src/PATENTS" "$out/licenses/PATENTS.jpeg-xl"
-    cp "$src/third_party/highway/LICENSE-BSD3" "$out/licenses/LICENSE-BSD3.highway"
-    cp "$build"/LICENSE.* "$out/licenses/"
-  fi
+  cp -r "$prefix/include/jxl" "$out/include/"
+  cp "$src/PATENTS" "$out/licenses/PATENTS.jpeg-xl"
+  cp "$src/third_party/highway/LICENSE-BSD3" "$out/licenses/LICENSE-BSD3.highway"
+  cp "$build"/LICENSE.* "$out/licenses/"
 }
 
-build_variant libjxl OFF
-build_variant libjxl-mt ON
+case "$variant" in
+  st) build_variant libjxl OFF ;;
+  mt) build_variant libjxl-mt ON ;;
+  *) echo "unknown variant: $variant" >&2; exit 1 ;;
+esac
 
 # Emscripten links its own runtime and system libraries into the output.
 em_root="$(em-config EMSCRIPTEN_ROOT)"
