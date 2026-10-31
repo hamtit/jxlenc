@@ -96,8 +96,12 @@ build_variant() {
     )
   fi
 
-  emcc "${link[@]}" "${defs[@]}" -I"$prefix/include" \
-    "$here/packages/wasm/src/jxlwasm.c" \
+  # The helpers are C (unmangled exports); libjxl is C++, so link with em++.
+  local cflags_arr
+  read -ra cflags_arr <<< "$cflags"
+  emcc -O3 "${cflags_arr[@]}" "${defs[@]}" -I"$prefix/include" \
+    -c "$here/packages/wasm/src/jxlwasm.c" -o "$build/jxlwasm.o"
+  em++ "${link[@]}" "$build/jxlwasm.o" \
     "${libs[@]}" "${brotli[@]}" "$lib/libhwy.a" \
     -o "$out/dist/$name.js"
 
