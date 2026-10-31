@@ -1,10 +1,12 @@
 name: Build libjxl
 
-# - pull_request / workflow_dispatch: build + test, packages kept as artifacts
+# - push to main / pull_request / workflow_dispatch: build + test, packages
+#   kept as artifacts
 # - tag v<LIBJXL_VERSION>-<PACKAGE_REVISION> (see build.env): also create a
 #   GitHub release with libjxl-native-*.tgz and libjxl-wasm-*.tgz
 on:
   push:
+    branches: [main]
     tags: ['v*']
   pull_request:
   workflow_dispatch:
